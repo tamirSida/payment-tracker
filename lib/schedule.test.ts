@@ -61,6 +61,13 @@ describe("chargeDates", () => {
     expect(chargeDates(p, "2026-02-01")).toEqual(["2026-01-05", "2026-01-19"]);
   });
 
+  it("biweekly starting late in a week charges on the first eligible day", () => {
+    // Sat 2026-10-10 start, Sun+Wed every 2 weeks -> Oct 11, 14, then Oct 25, 28.
+    const p = payment({ startDate: "2026-10-10", schedule: weekly([0, 3], 2) });
+    expect(chargeDates(p, "2026-10-31")).toEqual(["2026-10-11", "2026-10-14", "2026-10-25", "2026-10-28"]);
+    expect(nextChargeDate(p, "2026-10-02")).toBe("2026-10-11");
+  });
+
   it("monthly clamps day 31 to month end", () => {
     const p = payment({ startDate: "2026-01-31", schedule: { type: "monthly", every: 1, weekdays: [], dayOfMonth: 31 } });
     expect(chargeDates(p, "2026-04-30")).toEqual(["2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30"]);
@@ -69,6 +76,12 @@ describe("chargeDates", () => {
   it("monthly day before start day waits for next month", () => {
     const p = payment({ startDate: "2026-01-15", schedule: { type: "monthly", every: 1, weekdays: [], dayOfMonth: 1 } });
     expect(chargeDates(p, "2026-03-01")).toEqual(["2026-02-01", "2026-03-01"]);
+  });
+
+  it("monthly every N anchors on the first reachable month", () => {
+    // Start Jun 20, every 2 months on the 15th -> Jul 15 is the first charge.
+    const p = payment({ startDate: "2026-06-20", schedule: { type: "monthly", every: 2, weekdays: [], dayOfMonth: 15 } });
+    expect(chargeDates(p, "2026-11-30")).toEqual(["2026-07-15", "2026-09-15", "2026-11-15"]);
   });
 
   it("stops at the end date", () => {

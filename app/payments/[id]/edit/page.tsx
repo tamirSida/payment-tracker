@@ -9,6 +9,7 @@ import { useApp } from "@/components/AppProvider";
 import { PaymentForm } from "@/components/PaymentForm";
 import { RequireAuth } from "@/components/RequireAuth";
 import { ConfirmSheet } from "@/components/Sheet";
+import { useToast } from "@/components/Toast";
 import { deletePayment, updatePayment } from "@/lib/data";
 import { NotFound } from "@/components/NotFound";
 
@@ -16,6 +17,7 @@ function EditPayment() {
   const { id } = useParams<{ id: string }>();
   const { user, payments } = useApp();
   const router = useRouter();
+  const toast = useToast();
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -29,6 +31,7 @@ function EditPayment() {
     try {
       await deletePayment(user!.uid, id);
       router.replace("/");
+      toast({ message: `Deleted ${payment!.name}` });
     } catch (e) {
       setDeleteError(e instanceof Error ? e.message : "Could not delete.");
       setDeleting(false);
@@ -39,7 +42,7 @@ function EditPayment() {
   return (
     <>
       <header className="topbar">
-        <Link href={`/payments/${id}`} className="icon-btn" aria-label="Back">
+        <Link href={`/payments/${id}`} className="icon-btn" aria-label="Back to payment">
           <FontAwesomeIcon icon={faArrowLeft} />
         </Link>
         <h1 className="title-sm">Edit payment</h1>
@@ -49,9 +52,14 @@ function EditPayment() {
       <PaymentForm
         initial={payment}
         submitLabel="Save changes"
-        onSubmit={async (input) => {
-          await updatePayment(user!.uid, id, input);
-          router.replace(`/payments/${id}`);
+        onSubmit={(input) => {
+          updatePayment(user!.uid, id, input).done.catch((e: Error) =>
+            toast({ tone: "error", message: `Couldn't save changes: ${e.message}` }),
+          );
+          // Return to the detail page without stacking a duplicate history entry.
+          if (window.history.length > 1) router.back();
+          else router.replace(`/payments/${id}`);
+          toast({ message: "Changes saved" });
         }}
       />
 

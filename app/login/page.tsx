@@ -37,13 +37,20 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (user) router.replace("/");
+    if (!user) return;
+    // Only allow same-origin relative paths as the post-login destination.
+    const next = new URLSearchParams(window.location.search).get("next");
+    router.replace(next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
   }, [user, router]);
 
   if (authLoading || user) return <FullScreenSpinner />;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!email.trim() || !password) {
+      setError("Enter your email and password.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -66,14 +73,14 @@ export default function LoginPage() {
       <form className="form card login-card" onSubmit={handleSubmit}>
         <label className="field">
           <span className="field-label">Email</span>
-          <input className="input" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input className="input" type="email" autoComplete="email" autoFocus required value={email} onChange={(e) => setEmail(e.target.value)} />
         </label>
         <label className="field">
           <span className="field-label">Password</span>
           <input className="input" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
         </label>
         {error && <p className="error" role="alert">{error}</p>}
-        <button className="btn btn-primary btn-block" type="submit" disabled={busy || !email || !password}>
+        <button className="btn btn-primary btn-block" type="submit" disabled={busy}>
           {busy && <FontAwesomeIcon icon={faCircleNotch} spin />}
           Sign in
         </button>

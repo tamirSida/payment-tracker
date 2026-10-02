@@ -1,14 +1,16 @@
 "use client";
 
-import { faCircleNotch, faCheck } from "@fortawesome/free-solid-svg-icons";
+import { faCheck, faPen } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { useState } from "react";
-import { addTransaction } from "@/lib/data";
-import { formatMoney, parseMoney } from "@/lib/money";
+import { useRef, useState } from "react";
+import { addTransaction, deleteTransaction } from "@/lib/data";
+import { currencySymbol, formatDate, formatMoney, parseMoney } from "@/lib/money";
 import { todayISO } from "@/lib/schedule";
 import type { Payment } from "@/lib/types";
+import { describeBalance } from "./BalanceBadge";
 import { Stepper } from "./PaymentForm";
 import { Sheet } from "./Sheet";
+import { useToast } from "./Toast";
 
 type Mode = "one" | "multi" | "settle" | "custom";
 
@@ -23,14 +25,18 @@ export function PaySheet({
   balanceCents: number;
   onClose: () => void;
 }) {
+  const toast = useToast();
+  const today = todayISO();
   const debt = balanceCents < 0 ? -balanceCents : 0;
-  const [mode, setMode] = useState<Mode>(debt > 0 && debt !== payment.priceCents ? "settle" : "one");
+  const [chosen, setMode] = useState<Mode>(debt > 0 && debt !== payment.priceCents ? "settle" : "one");
+  // If the debt disappears while the sheet is open (live update), fall back to one payment.
+  const mode: Mode = chosen === "settle" && debt === 0 ? "one" : chosen;
   const [n, setN] = useState(Math.max(2, payment.multiN));
   const [custom, setCustom] = useState("");
   const [note, setNote] = useState("");
-  const [date, setDate] = useState(todayISO());
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [date, setDate] = useState(today);
+  const [showDetails, setShowDetails] = useState(false);
+  const radioRefs = useRef<Partial<Record<Mode, HTMLDivElement | null>>>({});
 
   const fmt = (c: number) => formatMoney(c, payment.currency);
   const amountCents =
@@ -39,97 +45,138 @@ export function PaySheet({
     : mode === "settle" ? debt
     : parseMoney(custom);
 
-  const valid = amountCents !== null && amountCents > 0 && !!date;
-  const after = valid ? balanceCents + amountCents : balanceCents;
+  const validAmount = amountCents !== null && amountCents > 0;
+  const validDate = !!date && date <= today;
+  const valid = validAmount && validDate;
+  const after = validAmount ? balanceCents + amountCents : balanceCents;
+  const modes: Mode[] = debt > 0 ? ["one", "multi", "settle", "custom"] : ["one", "multi", "custom"];
 
-  async function submit() {
+  function submit() {
     if (!valid) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await addTransaction(uid, { paymentId: payment.id, amountCents: amountCents!, note: note.trim(), date });
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save the payment.");
-      setSaving(false);
+    const amount = amountCents!;
+    const write = addTransaction(uid, { paymentId: payment.id, amountCents: amount, note: note.trim(), date });
+    // Close immediately: Firestore applies the write locally (works offline) and syncs in the background.
+    onClose();
+    toast({
+      message: `Recorded ${fmt(amount)} for ${payment.name}`,
+      action: { label: "Undo", onClick: () => deleteTransaction(uid, write.id) },
+    });
+    write.done.catch((e: Error) =>
+      toast({ tone: "error", message: `Couldn't save the payment: ${e.message}` }),
+    );
+  }
+
+  function onRadioKey(e: React.KeyboardEvent, m: Mode) {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      setMode(m);
+      return;
     }
+    const delta = e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : 0;
+    if (!delta) return;
+    e.preventDefault();
+    const next = modes[(modes.indexOf(m) + delta + modes.length) % modes.length];
+    setMode(next);
+    radioRefs.current[next]?.focus();
   }
 
   const option = (m: Mode, title: string, amount: React.ReactNode, extra?: React.ReactNode) => (
-    <div
-      className={`pay-option ${mode === m ? "active" : ""}`}
-      role="radio"
-      aria-checked={mode === m}
-      tabIndex={0}
-      onClick={() => setMode(m)}
-      onKeyDown={(e) => (e.key === " " || e.key === "Enter") && (e.preventDefault(), setMode(m))}
-    >
-      <span className="radio" aria-hidden>{mode === m && <FontAwesomeIcon icon={faCheck} />}</span>
-      <span className="grow">
-        <span className="pay-option-title">{title}</span>
-        {extra}
-      </span>
-      <span className="pay-option-amount">{amount}</span>
+    <div className={`pay-option ${mode === m ? "active" : ""}`} onClick={() => setMode(m)}>
+      <div
+        ref={(el) => {
+          radioRefs.current[m] = el;
+        }}
+        className="pay-option-main"
+        role="radio"
+        aria-checked={mode === m}
+        tabIndex={mode === m ? 0 : -1}
+        onKeyDown={(e) => onRadioKey(e, m)}
+      >
+        <span className="radio" aria-hidden>
+          {mode === m && <FontAwesomeIcon icon={faCheck} />}
+        </span>
+        <span className="pay-option-title grow">{title}</span>
+        <span className="pay-option-amount">{amount}</span>
+      </div>
+      {extra && <div className="pay-option-extra">{extra}</div>}
     </div>
   );
 
   return (
-    <Sheet title={`Pay ${payment.name}`} onClose={onClose}>
-      <div className="pay-options" role="radiogroup" aria-label="Payment amount">
-        {option("one", "One payment", fmt(payment.priceCents))}
+    <Sheet
+      title={`Pay ${payment.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <p className="pay-preview">
+            Balance after:{" "}
+            <strong className={after < 0 ? "text-debt" : after > 0 ? "text-credit" : ""}>
+              {describeBalance(after, payment.currency)}
+            </strong>
+          </p>
+          <button className="btn btn-primary btn-block" disabled={!valid} onClick={submit}>
+            {!validAmount ? "Enter an amount" : !validDate ? "Pick a date up to today" : `Record ${fmt(amountCents!)}`}
+          </button>
+        </>
+      }
+    >
+      <div className="pay-options" role="radiogroup" aria-label="How much to pay">
+        {option("one", "One charge", fmt(payment.priceCents))}
         {option(
           "multi",
-          `${n} payments`,
+          `${n} charges`,
           fmt(payment.priceCents * n),
-          <span onClick={(e) => { e.stopPropagation(); setMode("multi"); }} className="pay-option-extra">
-            <Stepper value={n} onChange={setN} min={2} label="number of payments" />
-          </span>,
+          mode === "multi" && (
+            <div className="row between">
+              <span className="muted">
+                {n} &times; {fmt(payment.priceCents)}
+              </span>
+              <Stepper value={n} onChange={setN} min={2} label="number of charges" />
+            </div>
+          ),
         )}
-        {debt > 0 && option("settle", "Pay off balance", fmt(debt))}
+        {debt > 0 && option("settle", "Full balance", fmt(debt))}
         {option(
           "custom",
           "Custom amount",
-          mode === "custom" ? null : <span className="muted">Any</span>,
+          mode === "custom" && validAmount ? fmt(amountCents!) : "",
           mode === "custom" && (
-            <input
-              className="input pay-custom"
-              inputMode="decimal"
-              placeholder="0"
-              autoFocus
-              value={custom}
-              aria-label="Custom amount"
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => e.stopPropagation()}
-              onChange={(e) => setCustom(e.target.value)}
-            />
+            <div className="money-input">
+              <span className="money-prefix" aria-hidden>
+                {currencySymbol(payment.currency)}
+              </span>
+              <input
+                className="input input-money"
+                inputMode="decimal"
+                placeholder="Enter amount"
+                autoFocus
+                value={custom}
+                aria-label="Custom amount"
+                onChange={(e) => setCustom(e.target.value)}
+              />
+            </div>
           ),
         )}
       </div>
 
-      <div className="row gap">
-        <label className="field grow">
-          <span className="field-label">Note (optional)</span>
-          <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Bank transfer" maxLength={120} />
-        </label>
-        <label className="field">
-          <span className="field-label">Date</span>
-          <input className="input" type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)} />
-        </label>
-      </div>
-
-      <p className="pay-preview">
-        Balance after:{" "}
-        <strong className={after < 0 ? "text-debt" : after > 0 ? "text-credit" : ""}>
-          {after === 0 ? "Settled" : `${fmt(Math.abs(after))} ${after < 0 ? "owed" : "credit"}`}
-        </strong>
-      </p>
-
-      {error && <p className="error" role="alert">{error}</p>}
-
-      <button className="btn btn-primary btn-block" disabled={!valid || saving} onClick={submit}>
-        {saving && <FontAwesomeIcon icon={faCircleNotch} spin />}
-        {valid ? `Record ${fmt(amountCents!)}` : "Enter an amount"}
-      </button>
+      {showDetails || mode === "custom" || note || date !== today ? (
+        <div className="pay-details">
+          <label className="field">
+            <span className="field-label">Note (optional)</span>
+            <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Bank transfer" maxLength={120} />
+          </label>
+          <label className="field">
+            <span className="field-label">Date paid</span>
+            <input className="input" type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} />
+          </label>
+        </div>
+      ) : (
+        <button type="button" className="link-btn" onClick={() => setShowDetails(true)}>
+          <FontAwesomeIcon icon={faPen} /> Add a note or change date
+          <span className="muted"> &middot; {formatDate(today)}</span>
+        </button>
+      )}
     </Sheet>
   );
 }

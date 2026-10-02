@@ -2,7 +2,7 @@
 
 import { faCircleNotch, faTriangleExclamation } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useApp } from "./AppProvider";
 
@@ -14,16 +14,33 @@ export function FullScreenSpinner() {
   );
 }
 
+function Skeleton() {
+  return (
+    <div className="skeleton-wrap" role="status" aria-label="Loading">
+      <div className="skeleton skeleton-title" />
+      <div className="skeleton skeleton-hero" />
+      <div className="skeleton skeleton-card" />
+      <div className="skeleton skeleton-card" />
+      <div className="skeleton skeleton-card" />
+    </div>
+  );
+}
+
 /** Renders children only for a signed-in user whose data has loaded. */
 export function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, authLoading, dataLoading, dataError } = useApp();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
-    if (!authLoading && !user) router.replace("/login");
-  }, [authLoading, user, router]);
+    if (!authLoading && !user) {
+      const next = pathname && pathname !== "/" ? `?next=${encodeURIComponent(pathname)}` : "";
+      router.replace(`/login${next}`);
+    }
+  }, [authLoading, user, router, pathname]);
 
-  if (authLoading || !user || dataLoading) return <FullScreenSpinner />;
+  if (authLoading || !user) return <FullScreenSpinner />;
+  if (dataLoading) return <Skeleton />;
 
   if (dataError) {
     return (

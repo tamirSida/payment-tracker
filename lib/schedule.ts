@@ -42,18 +42,24 @@ export function occursOn(s: Schedule, start: number, t: number): boolean {
     case "weekly": {
       const dow = date.getUTCDay();
       if (!s.weekdays.includes(dow)) return false;
-      // Weeks start on Sunday; count whole weeks since the start date's week.
-      const startWeek = start - new Date(start).getUTCDay() * DAY;
+      // Weeks start on Sunday. The cycle is anchored on the week of the first
+      // selected weekday on/after the start date, so the first charge is never skipped.
+      let first = start;
+      while (!s.weekdays.includes(new Date(first).getUTCDay())) first += DAY;
+      const anchorWeek = first - new Date(first).getUTCDay() * DAY;
       const thisWeek = t - dow * DAY;
-      return Math.round((thisWeek - startWeek) / (7 * DAY)) % n === 0;
+      return Math.round((thisWeek - anchorWeek) / (7 * DAY)) % n === 0;
     }
 
     case "monthly": {
+      // Anchor the cycle on the first month whose charge day is on/after the start date.
       const sd = new Date(start);
-      const months =
-        (date.getUTCFullYear() - sd.getUTCFullYear()) * 12 +
-        (date.getUTCMonth() - sd.getUTCMonth());
-      if (months % n !== 0) return false;
+      const sy = sd.getUTCFullYear();
+      const sm = sd.getUTCMonth();
+      const firstDom = Math.min(s.dayOfMonth, daysInMonth(sy, sm));
+      const anchor = sy * 12 + sm + (sd.getUTCDate() <= firstDom ? 0 : 1);
+      const months = date.getUTCFullYear() * 12 + date.getUTCMonth() - anchor;
+      if (months < 0 || months % n !== 0) return false;
       const dom = Math.min(
         s.dayOfMonth,
         daysInMonth(date.getUTCFullYear(), date.getUTCMonth()),

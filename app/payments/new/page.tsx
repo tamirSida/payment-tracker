@@ -7,16 +7,18 @@ import { useRouter } from "next/navigation";
 import { useApp } from "@/components/AppProvider";
 import { PaymentForm } from "@/components/PaymentForm";
 import { RequireAuth } from "@/components/RequireAuth";
+import { useToast } from "@/components/Toast";
 import { createPayment } from "@/lib/data";
 
 function NewPayment() {
   const { user } = useApp();
   const router = useRouter();
+  const toast = useToast();
 
   return (
     <>
       <header className="topbar">
-        <Link href="/" className="icon-btn" aria-label="Back">
+        <Link href="/" className="icon-btn" aria-label="Back to payments">
           <FontAwesomeIcon icon={faArrowLeft} />
         </Link>
         <h1 className="title-sm">New payment</h1>
@@ -24,9 +26,11 @@ function NewPayment() {
       </header>
       <PaymentForm
         submitLabel="Create payment"
-        onSubmit={async (input) => {
-          const id = await createPayment(user!.uid, input);
-          router.replace(`/payments/${id}`);
+        onSubmit={(input) => {
+          const write = createPayment(user!.uid, input);
+          write.done.catch((e: Error) => toast({ tone: "error", message: `Couldn't save the payment: ${e.message}` }));
+          router.replace(`/payments/${write.id}`);
+          toast({ message: `Created ${input.name}` });
         }}
       />
     </>

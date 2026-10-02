@@ -2,9 +2,11 @@
 
 import {
   faArrowLeft,
-  faArrowTrendDown,
   faCalendarDay,
+  faClock,
   faCoins,
+  faFileInvoiceDollar,
+  faHandHoldingDollar,
   faPen,
   faRotate,
   faTrashCan,
@@ -14,14 +16,15 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useApp } from "@/components/AppProvider";
-import { balanceLabel, balanceTone } from "@/components/BalanceBadge";
+import { balanceTone, describeBalance, TONE_LABEL } from "@/components/BalanceBadge";
 import { NotFound } from "@/components/NotFound";
 import { PaySheet } from "@/components/PaySheet";
 import { RequireAuth } from "@/components/RequireAuth";
-import { ConfirmSheet } from "@/components/Sheet";
-import { deleteTransaction } from "@/lib/data";
+import { useToast } from "@/components/Toast";
+import { useToday } from "@/components/useToday";
+import { deleteTransaction, restoreTransaction } from "@/lib/data";
 import { formatDate, formatMoney } from "@/lib/money";
-import { chargeDates, computeBalance, describeSchedule, nextChargeDate, todayISO } from "@/lib/schedule";
+import { chargeDates, computeBalance, describeSchedule, nextChargeDate } from "@/lib/schedule";
 import type { Transaction } from "@/lib/types";
 
 type Entry =
@@ -29,15 +32,15 @@ type Entry =
   | { kind: "payment"; key: string; date: string; amountCents: number; running: number; tx: Transaction };
 
 const PAGE = 30;
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 function PaymentDetail() {
   const { id } = useParams<{ id: string }>();
   const { user, payments, transactions } = useApp();
+  const toast = useToast();
   const [paying, setPaying] = useState(false);
-  const [toDelete, setToDelete] = useState<Transaction | null>(null);
-  const [deleting, setDeleting] = useState(false);
   const [shown, setShown] = useState(PAGE);
-  const today = todayISO();
+  const today = useToday();
   const payment = payments.find((p) => p.id === id);
 
   const data = useMemo(() => {
@@ -65,24 +68,32 @@ function PaymentDetail() {
   if (!payment || !data) return <NotFound />;
 
   const { balance, entries, next } = data;
-  const tone = balanceTone(balance.balanceCents);
+  const tone = balanceTone(balance);
   const fmt = (c: number) => formatMoney(c, payment.currency);
+  const chargesLine = `${plural(balance.chargeCount, "charge")} of ${fmt(payment.priceCents)} · ${fmt(balance.paidCents)} paid`;
+  const covers = Math.floor(balance.balanceCents / payment.priceCents);
 
-  async function confirmDelete() {
-    if (!toDelete) return;
-    setDeleting(true);
-    try {
-      await deleteTransaction(user!.uid, toDelete.id);
-      setToDelete(null);
-    } finally {
-      setDeleting(false);
-    }
+  const heroAmount = tone === "upcoming" ? fmt(payment.priceCents) : fmt(Math.abs(balance.balanceCents));
+  const heroSub =
+    tone === "upcoming" ? (next ? `First charge ${formatDate(next)}` : "No charges scheduled")
+    : tone === "credit" ? `${covers > 0 ? `Covers the next ${plural(covers, "charge")}` : "Covers part of the next charge"} · ${chargesLine}`
+    : chargesLine;
+
+  function removeRecord(tx: Transaction) {
+    const uid = user!.uid;
+    deleteTransaction(uid, tx.id).done.catch((e: Error) =>
+      toast({ tone: "error", message: `Couldn't delete: ${e.message}` }),
+    );
+    toast({
+      message: `Removed ${fmt(tx.amountCents)} payment`,
+      action: { label: "Undo", onClick: () => restoreTransaction(uid, tx) },
+    });
   }
 
   return (
     <>
       <header className="topbar">
-        <Link href="/" className="icon-btn" aria-label="Back">
+        <Link href="/" className="icon-btn" aria-label="Back to payments">
           <FontAwesomeIcon icon={faArrowLeft} />
         </Link>
         <h1 className="title-sm truncate">{payment.name}</h1>
@@ -91,12 +102,12 @@ function PaymentDetail() {
         </Link>
       </header>
 
-      <section className={`hero card hero-${tone}`}>
-        <p className="hero-label">{balanceLabel(balance.balanceCents)}</p>
-        <p className="hero-amount">{tone === "settled" ? fmt(0) : fmt(Math.abs(balance.balanceCents))}</p>
-        <p className="hero-sub">
-          {balance.chargeCount} charge{balance.chargeCount === 1 ? "" : "s"} of {fmt(payment.priceCents)} &middot; {fmt(balance.paidCents)} paid
+      <section className={`hero card hero-${tone}`} aria-live="polite">
+        <p className="hero-label">{TONE_LABEL[tone]}</p>
+        <p className="hero-amount" key={balance.balanceCents}>
+          {heroAmount}
         </p>
+        <p className="hero-sub">{heroSub}</p>
         <button className="btn btn-pay btn-block" onClick={() => setPaying(true)}>
           <FontAwesomeIcon icon={faCoins} /> Pay
         </button>
@@ -111,12 +122,12 @@ function PaymentDetail() {
         <div className="detail-row">
           <FontAwesomeIcon icon={faCalendarDay} className="detail-icon" />
           <span className="grow">
-            {formatDate(payment.startDate, { year: "numeric" })} &ndash;{" "}
-            {payment.endDate ? formatDate(payment.endDate, { year: "numeric" }) : "no end"}
+            {formatDate(payment.startDate, { weekday: undefined, year: "numeric" })} &ndash;{" "}
+            {payment.endDate ? formatDate(payment.endDate, { weekday: undefined, year: "numeric" }) : "no end"}
           </span>
         </div>
         <div className="detail-row">
-          <FontAwesomeIcon icon={faArrowTrendDown} className="detail-icon" />
+          <FontAwesomeIcon icon={faClock} className="detail-icon" />
           <span className="grow">Next charge</span>
           <span className="muted">{next ? formatDate(next) : "None, schedule ended"}</span>
         </div>
@@ -124,13 +135,13 @@ function PaymentDetail() {
 
       <h2 className="section-title">Activity</h2>
       {entries.length === 0 ? (
-        <p className="muted center pad">No charges yet. The first one is {next ? formatDate(next) : "not scheduled"}.</p>
+        <p className="muted center pad">No activity yet.{next ? ` The first charge is ${formatDate(next)}.` : ""}</p>
       ) : (
         <ul className="ledger card">
           {entries.slice(0, shown).map((e) => (
             <li key={e.key} className="ledger-row">
               <span className={`ledger-icon ${e.kind}`} aria-hidden>
-                <FontAwesomeIcon icon={e.kind === "charge" ? faArrowTrendDown : faCoins} />
+                <FontAwesomeIcon icon={e.kind === "charge" ? faFileInvoiceDollar : faHandHoldingDollar} />
               </span>
               <span className="grow min0">
                 <span className="ledger-title">{e.kind === "charge" ? "Charge" : "Payment"}</span>
@@ -141,15 +152,17 @@ function PaymentDetail() {
               </span>
               <span className="ledger-amounts">
                 <span className={e.kind === "charge" ? "text-debt" : "text-credit"}>
-                  {e.kind === "charge" ? "-" : "+"}
+                  {e.kind === "charge" ? "−" : "+"}
                   {fmt(Math.abs(e.amountCents))}
                 </span>
-                <span className="ledger-running">bal {fmt(e.running)}</span>
+                <span className="ledger-running">{describeBalance(e.running, payment.currency)}</span>
               </span>
-              {e.kind === "payment" && (
-                <button className="icon-btn icon-btn-sm" aria-label="Delete payment record" onClick={() => setToDelete(e.tx)}>
+              {e.kind === "payment" ? (
+                <button className="icon-btn icon-btn-ghost" aria-label={`Delete ${fmt(e.amountCents)} payment from ${formatDate(e.date)}`} onClick={() => removeRecord(e.tx)}>
                   <FontAwesomeIcon icon={faTrashCan} />
                 </button>
+              ) : (
+                <span className="icon-btn-spacer" aria-hidden />
               )}
             </li>
           ))}
@@ -163,16 +176,6 @@ function PaymentDetail() {
 
       {paying && (
         <PaySheet uid={user!.uid} payment={payment} balanceCents={balance.balanceCents} onClose={() => setPaying(false)} />
-      )}
-      {toDelete && (
-        <ConfirmSheet
-          title="Delete this payment record?"
-          message={`${fmt(toDelete.amountCents)} on ${formatDate(toDelete.date)} will be removed and the balance recalculated.`}
-          confirmLabel={deleting ? "Deleting..." : "Delete"}
-          busy={deleting}
-          onConfirm={confirmDelete}
-          onClose={() => setToDelete(null)}
-        />
       )}
     </>
   );

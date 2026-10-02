@@ -4,13 +4,14 @@ import { config } from "@fortawesome/fontawesome-svg-core";
 import type { Metadata, Viewport } from "next";
 import { Manrope } from "next/font/google";
 import { AppProvider } from "@/components/AppProvider";
+import { ToastProvider } from "@/components/Toast";
 
 config.autoAddCss = false;
 
 const manrope = Manrope({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata: Metadata = {
-  title: "Tally - Payment Tracker",
+  title: "Tally",
   description: "Track recurring payments and what you owe.",
 };
 
@@ -19,6 +20,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: "cover",
   themeColor: "#f6f3ee",
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -26,7 +28,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={manrope.variable}>
       <body>
         <AppProvider>
-          <main className="app">{children}</main>
+          <ToastProvider>
+            <main className="app">{children}</main>
+          </ToastProvider>
         </AppProvider>
       </body>
     </html>

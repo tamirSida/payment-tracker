@@ -12,11 +12,11 @@ A mobile-first Next.js app that tracks recurring payments and how much you owe. 
 - **Balance** = total paid - (charges x price). A negative balance is debt. A positive balance is credit that goes toward future charges.
 - **Pay** records one payment, N payments (N defaults to the payment's "quick multi-pay" setting), the exact balance owed, or a custom amount. Each can have an optional note and date.
 
-Data lives at `users/{uid}/payments/*` and `users/{uid}/transactions/*`. The rules in `firestore.rules` restrict each user to their own data.
+Data lives at `tally_users/{uid}/payments/*` and `tally_users/{uid}/transactions/*`. This prefix keeps it apart from other apps in the same Firebase project. `firestore.rules` restricts each user to their own data and validates every write.
 
 ## Setup
 
-1. Firebase console > Authentication > Sign-in method: enable **Email/Password**.
+1. Firebase console > Authentication > Sign-in method: enable **Email/Password**. Then go to Authentication > Settings > User actions and **turn off "Enable create (sign-up)"**, so nobody can register with the public API key.
 2. Firebase console > Authentication > Users: **add your user**. The app has no sign-up screen.
 3. Firebase console > Firestore: create the database and publish the rules from `firestore.rules`. You can also run `firebase deploy --only firestore:rules`, but note that this **replaces** any existing rules in the project.
 
